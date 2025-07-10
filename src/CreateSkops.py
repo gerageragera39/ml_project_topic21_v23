@@ -1,9 +1,11 @@
+import logging
+
 from sklearn.base import BaseEstimator, TransformerMixin
 import pandas as pd
 import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
-from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV, train_test_split, cross_val_score
 from catboost import CatBoostRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
@@ -65,11 +67,13 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
 
 
 if __name__ == '__main__':
+    logging.basicConfig(filename='model_cv_logs.log', level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+
     mean_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='mean')),
         ('scaler', StandardScaler())
     ])
-
     mean_features = ['1', '2', '3', '4', 'engine_capacity_cc_num', 'engine_capacity_cc_miss', 'horsepower_num',
                      'horsepower_miss', 'is_automatic', 'hp_per_cc', 'is_outlier', 'model_enc']
 
@@ -77,14 +81,12 @@ if __name__ == '__main__':
         ('imputer', SimpleImputer(strategy='median')),
         ('scaler', StandardScaler())
     ])
-
     median_features = ['0']
 
     categorical_transformer = Pipeline(steps=[
         ('imputer', SimpleImputer(strategy='most_frequent')),
         ('onehot', OneHotEncoder(handle_unknown='ignore'))
     ])
-
     categorical_features = ['brand', 'trim', 'body_type', 'fuel_type', 'exterior_color', 'interior_color', 'warranty',
                             'city', 'seller_type']
 
@@ -104,6 +106,7 @@ if __name__ == '__main__':
     loaded_data = pd.read_csv("../data/topic21_v23_train.csv")
 
     train_set, valid_set = train_test_split(loaded_data, test_size=0.2, random_state=1)
+    # train_set = loaded_data.copy()
 
     X_train = train_set.drop(columns=['price'])
     y_train = train_set['price']
@@ -114,13 +117,16 @@ if __name__ == '__main__':
 
     engineer = FeatureEngineer(MEANS)
 
-    for name, best_pipeline in models.items():
+    for name, model in models.items():
         full_pipeline = Pipeline([
             ('feature_engineer', engineer),
             ('preprocessor', preprocessor),
-            ('model', best_pipeline)
+            ('model', model)
         ])
 
-        full_pipeline.fit(X_train, y_train)
+        scores = cross_val_score(full_pipeline, X_train, y_train, cv=5, scoring='neg_mean_absolute_error')
+        mean_score = -scores.mean()
+        logging.info(f"{name} | CV MAE: {mean_score:.2f} | Fold scores: {[-s for s in scores]}")
 
+        full_pipeline.fit(X_train, y_train)
         dump(full_pipeline, f"full_pipeline_{name}.skops")
